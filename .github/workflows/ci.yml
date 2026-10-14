@@ -1,0 +1,88 @@
+name: example_CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: Labo05
+    env:
+      DB_HOST: ${{ vars.DB_HOST }}
+      DB_PORT: ${{ vars.DB_PORT }}
+      DB_USER: ${{ vars.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ vars.DB_NAME }}
+      REDIS_HOST: ${{ vars.REDIS_HOST }}
+      REDIS_PORT: ${{ vars.REDIS_PORT }}
+      REDIS_DB: ${{ vars.REDIS_DB }}
+
+    services:
+      mysql:
+        image: mysql:8.4.7
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          MYSQL_DATABASE: ${{ vars.DB_NAME }}
+          MYSQL_USER: ${{ vars.DB_USER }}
+          MYSQL_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout dépot
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Initialiser le schéma MySQL
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import mysql.connector
+
+          connection = mysql.connector.connect(
+              host=os.environ["DB_HOST"],
+              port=int(os.environ["DB_PORT"]),
+              user=os.environ["DB_USER"],
+              password=os.environ["DB_PASSWORD"],
+              database=os.environ["DB_NAME"],
+          )
+          try:
+              cursor = connection.cursor()
+              statements = Path("db-init/init.sql").read_text().split(";")
+              for statement in statements:
+                  if statement.strip():
+                      cursor.execute(statement)
+          finally:
+              connection.close()
+          PY
+
+      - name: Éxécuter les tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: | 
+          python -m pytest
